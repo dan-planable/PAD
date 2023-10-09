@@ -2,7 +2,9 @@
 
 	import (
 		"fmt"
+		"context"
 		"net/http"
+		"time"
 		"io"
 		"github.com/gin-gonic/gin"
 		"encoding/json"
@@ -44,26 +46,30 @@
 	// Function to proxy requests to the Account Service
 	func proxyToAccountService(c *gin.Context) {
 		accountServiceURL := "http://localhost:5000"
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) 
+		defer cancel()
+	
 		// Prepare the proxy request
 		url := accountServiceURL + c.Request.RequestURI
 		method := c.Request.Method
 		body := c.Request.Body
-
-		req, err := http.NewRequest(method, url, body)
+	
+		req, err := http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
 			return
 		}
-
+	
 		// Copy headers from the original request to the proxy request
 		for key, values := range c.Request.Header {
 			for _, value := range values {
 				req.Header.Add(key, value)
 			}
 		}
-
+	
 		// Send the proxy request to the Account Service
 		client := &http.Client{}
+		client.Timeout = 5 * time.Second 
 		resp, err := client.Do(req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Account Service"})
@@ -91,41 +97,45 @@
 	}
 
 	func proxyToTemplateService(c *gin.Context) {
-    templateServiceURL := "http://localhost:5001"
-
-    // Prepare the proxy request
-    url := templateServiceURL + c.Request.RequestURI
-    method := c.Request.Method
-    body := c.Request.Body
-
-    req, err := http.NewRequest(method, url, body)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
-        return
-    }
-
-    // Copy headers from the original request to the proxy request
-    for key, values := range c.Request.Header {
-        for _, value := range values {
-            req.Header.Add(key, value)
-        }
-    }
-
-    // Send the proxy request to the Template Service
-    client := &http.Client{}
-    resp, err := client.Do(req)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Template Service"})
-        return
-    }
-    defer resp.Body.Close()
-
-    // Read the response body from the Template Service
-    responseBody, err := io.ReadAll(resp.Body)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Template Service"})
-        return
-    }
+		templateServiceURL := "http://localhost:5001"
+	
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	
+		// Prepare the proxy request
+		url := templateServiceURL + c.Request.RequestURI
+		method := c.Request.Method
+		body := c.Request.Body
+	
+		req, err := http.NewRequestWithContext(ctx, method, url, body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
+			return
+		}
+	
+		// Copy headers from the original request to the proxy request
+		for key, values := range c.Request.Header {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	
+		// Send the proxy request to the Template Service
+		client := &http.Client{}
+		client.Timeout = 5 * time.Second 
+		resp, err := client.Do(req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Template Service"})
+			return
+		}
+		defer resp.Body.Close()
+	
+		// Read the response body from the Template Service
+		responseBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Template Service"})
+			return
+		}
 
     // Set the Content-Type header based on the original response
     c.Header("Content-Type", resp.Header.Get("Content-Type"))
