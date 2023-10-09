@@ -1,32 +1,56 @@
-	package main
+package main
 
-	import (
-		"fmt"
-		"context"
-		"net/http"
-		"time"
-		"io"
-		"github.com/gin-gonic/gin"
-		"encoding/json"
-	)
+import (
+	"fmt"
+	"context"
+	"net/http"
+	"time"
+	"io"
+	"github.com/gin-gonic/gin"
+	"encoding/json"
+)
 
-	func main() {
-		r := gin.Default()
-		// Define routes and endpoint mappings
-		r.POST("/accounts", authenticate, authorizeAccount, proxyToAccountService) // Create an account
-		r.GET("/accounts/:account_id/balance", authenticate, authorizeAccount, proxyToAccountService) // Get an account balance
-		r.GET("/accounts/:account_id/transactions", authenticate, authorizeAccount, proxyToAccountService) // Get account transactions
-		r.POST("/accounts/:account_id/deposit", authenticate, authorizeAccount, proxyToAccountService) // Deposit to an account
-		r.POST("/accounts/:account_id/withdraw", authenticate, authorizeAccount, proxyToAccountService) // Withdraw from an account
+func main() {
+	r := gin.Default()
+	// Define routes and endpoint mappings
+	r.POST("/accounts", authenticate, authorizeAccount, proxyToAccountService) // Create an account
+	r.GET("/accounts/:account_id/balance", authenticate, authorizeAccount, proxyToAccountService) // Get an account balance
+	r.GET("/accounts/:account_id/transactions", authenticate, authorizeAccount, proxyToAccountService) // Get account transactions
+	r.POST("/accounts/:account_id/deposit", authenticate, authorizeAccount, proxyToAccountService) // Deposit to an account
+	r.POST("/accounts/:account_id/withdraw", authenticate, authorizeAccount, proxyToAccountService) // Withdraw from an account
 
-		r.GET("/templates", authenticate, authorizeTemplate, proxyToTemplateService) // Get all templates of an account
-		r.POST("/templates", authenticate, authorizeTemplate, proxyToTemplateService) // Create a template for an account
-		r.GET("/templates/:template_id", authenticate, authorizeTemplate, proxyToTemplateService) // Get a particular template
-		r.PUT("/templates/:template_id", authenticate, authorizeTemplate, proxyToTemplateService) // Update a particular template
-		r.DELETE("/templates/:template_id", authenticate, authorizeTemplate, proxyToTemplateService) // Delete a particular template
+	r.GET("/templates", authenticate, authorizeTemplate, proxyToTemplateService) // Get all templates of an account
+	r.POST("/templates", authenticate, authorizeTemplate, proxyToTemplateService) // Create a template for an account
+	r.GET("/templates/:template_id", authenticate, authorizeTemplate, proxyToTemplateService) // Get a particular template
+	r.PUT("/templates/:template_id", authenticate, authorizeTemplate, proxyToTemplateService) // Update a particular template
+	r.DELETE("/templates/:template_id", authenticate, authorizeTemplate, proxyToTemplateService) // Delete a particular template
 
-		r.Run(":8080") 
-	}
+	// Status endpoint for Gateway service
+	r.GET("/gateway/status", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "OK"})
+	})
+
+	// Status endpoint for Service Discovery
+	serviceDiscoveryURL := "http://localhost:8082/status"
+	r.GET("/service_discovery/status", func(c *gin.Context) {
+		resp, err := http.Get(serviceDiscoveryURL)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "Service Discovery Unavailable"})
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "Service Discovery Unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "OK"})
+	})
+
+	// Start the Gateway service on port 8080
+	port := 8080
+	fmt.Printf("Gateway listening on port %d...\n", port)
+	r.Run(fmt.Sprintf(":%d", port))
+}
 
 	func authenticate(c *gin.Context) {
 		fmt.Println("Authentication passed")
