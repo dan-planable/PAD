@@ -33,6 +33,12 @@ def execute_query(query, data=None):
     conn.close()
     return result
 
+# Function to start the Flask app on a specified port
+def start_app(port):
+    with app.app_context():
+        app.run(debug=True, port=port, use_reloader=False)
+
+
 # Create a new payment template
 @app.route('/templates', methods=['POST'])
 def create_template():
@@ -103,4 +109,11 @@ def delete_template(template_id):
     return jsonify({'error': 'Template not found'}), 404
 
 if __name__ == '__main__':
-    app.run(port=5001, debug=True)
+    import sys
+
+    if len(sys.argv) != 2:
+        print("Usage: python templates_service.py <port>")
+        sys.exit(1)
+
+    port = int(sys.argv[1])
+    start_app(port)

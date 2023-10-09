@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 import sqlite3
 import uuid
 import hashlib
-import datetime
 
 app = Flask(__name__)
 
@@ -10,7 +9,7 @@ app = Flask(__name__)
 conn = sqlite3.connect('accounts.db')
 cursor = conn.cursor()
 
-# Create the accounts table
+# Create the accounts table if it doesn't exist
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS accounts (
         account_id TEXT PRIMARY KEY,
@@ -35,6 +34,11 @@ def execute_query(query, data=None):
     conn.commit()
     conn.close()
     return result
+
+# Function to start the Flask app on a specified port
+def start_app(port):
+    with app.app_context():
+        app.run(debug=True, port=port, use_reloader=False)
 
 # Create a new account
 @app.route('/accounts', methods=['POST'])
@@ -124,4 +128,13 @@ def withdraw(account_id):
     return jsonify({'error': 'Account not found or invalid amount'}), 404
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    import sys
+
+    if len(sys.argv) != 2:
+        print("Usage: python accounts_service.py <port>")
+        sys.exit(1)
+
+    port = int(sys.argv[1])
+    start_app(port)
+
+    

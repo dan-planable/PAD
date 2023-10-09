@@ -16,14 +16,14 @@ type Service struct {
 
 // ServiceRegistry maintains a registry of available services.
 type ServiceRegistry struct {
-	services map[string]Service
+	services map[string][]Service
 	mu       sync.RWMutex
 }
 
 // NewServiceRegistry creates a new ServiceRegistry.
 func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
-		services: make(map[string]Service),
+		services: make(map[string][]Service), 
 	}
 }
 
@@ -31,27 +31,18 @@ func NewServiceRegistry() *ServiceRegistry {
 func (s *ServiceRegistry) RegisterService(name, host string, port int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.services[name] = Service{Name: name, Host: host, Port: port}
+	s.services[name] = append(s.services[name], Service{Name: name, Host: host, Port: port})
 }
 
-// GetServices returns a list of all registered services.
-func (s *ServiceRegistry) GetServices() []Service {
+// GetServices returns a list of all registered services for a given service name.
+func (s *ServiceRegistry) GetServices(name string) []Service {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	services := make([]Service, 0, len(s.services))
-	for _, service := range s.services {
-		services = append(services, service)
-	}
-	return services
+	return s.services[name]
 }
 
 func main() {
 	registry := NewServiceRegistry()
-
-	// Register my services
-	registry.RegisterService("account_service", "localhost", 5000)
-	registry.RegisterService("template_service", "localhost", 5001)
-
 	// Status endpoint
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -62,8 +53,18 @@ func main() {
 	// Services endpoint
 	http.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		services := registry.GetServices()
-		json.NewEncoder(w).Encode(services)
+
+		// Extract the requested service name from the query parameter
+		serviceName := r.URL.Query().Get("service")
+		if serviceName == "" {
+			// If no service name is provided, return all registered services
+			services := registry.services
+			json.NewEncoder(w).Encode(services)
+		} else {
+			// Return services for the specified service name
+			services := registry.GetServices(serviceName)
+			json.NewEncoder(w).Encode(services)
+		}
 	})
 
 	port := 8082
