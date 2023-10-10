@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import sqlite3
 import uuid
 import hashlib
+import multiprocessing
 
 app = Flask(__name__)
 
@@ -128,13 +129,16 @@ def withdraw(account_id):
     return jsonify({'error': 'Account not found or invalid amount'}), 404
 
 if __name__ == '__main__':
-    import sys
+    # Number of replicas per service
+    num_replicas = 3
 
-    if len(sys.argv) != 2:
-        print("Usage: python accounts_service.py <port>")
-        sys.exit(1)
+    # Start each replica on a separate port
+    for port in range(5000, 5000 + num_replicas):
+        process = multiprocessing.Process(target=start_app, args=(port,))
+        process.start()
 
-    port = int(sys.argv[1])
-    start_app(port)
+    # Wait for processes to finish
+    for process in multiprocessing.active_children():
+        process.join()
 
     

@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 import sqlite3
 import uuid
+import multiprocessing
 
 app = Flask(__name__)
 
@@ -109,11 +110,14 @@ def delete_template(template_id):
     return jsonify({'error': 'Template not found'}), 404
 
 if __name__ == '__main__':
-    import sys
+    # Number of replicas per service
+    num_replicas = 3
 
-    if len(sys.argv) != 2:
-        print("Usage: python templates_service.py <port>")
-        sys.exit(1)
+    # Start each replica on a separate port
+    for port in range(5005, 5005 + num_replicas):
+        process = multiprocessing.Process(target=start_app, args=(port,))
+        process.start()
 
-    port = int(sys.argv[1])
-    start_app(port)
+    # Wait for processes to finish
+    for process in multiprocessing.active_children():
+        process.join()
