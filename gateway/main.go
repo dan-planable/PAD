@@ -9,7 +9,10 @@ import (
     "time"
 
     "github.com/gin-gonic/gin"
+    "github.com/go-redis/redis/v8"
 )
+
+var rdb *redis.Client
 
 // Service represents a registered microservice
 type Service struct {
@@ -63,6 +66,11 @@ func main() {
     concurrentLimit := 10 
     taskLimit := make(chan struct{}, concurrentLimit)
 
+    rdb = redis.NewClient(&redis.Options{
+        Addr:     "localhost:6379",
+        Password: "",              
+        DB:       0,              
+    })
 
     // Register replicas for "account_service" and "template_service" in the service directory
     registry.RegisterService("account_service", "localhost", 5000)
@@ -70,8 +78,8 @@ func main() {
     registry.RegisterService("account_service", "localhost", 5002) 
 
     registry.RegisterService("template_service", "localhost", 5005)
-	registry.RegisterService("template_service", "localhost", 5006) 
-	registry.RegisterService("template_service", "localhost", 5007) 
+    registry.RegisterService("template_service", "localhost", 5006) 
+    registry.RegisterService("template_service", "localhost", 5007) 
 
     // Status endpoint for Gateway service
     r.GET("/gateway/status", func(c *gin.Context) {
@@ -116,6 +124,12 @@ func main() {
     var nextServiceIndex int
 
     return func(c *gin.Context) {
+        // Check if the response is cached in Redis
+        cachedResponse, err := rdb.Get(context.Background(), c.Request.URL.RequestURI()).Result()
+        if err == nil {
+            c.Data(http.StatusOK, "application/json", []byte(cachedResponse))
+            return 
+        }
         // Try to acquire a slot from the task limit
         select {
         case taskLimit <- struct{}{}:
@@ -182,6 +196,11 @@ func main() {
 
             // Send the response from the service to the gateway response
             c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+            // Store the response in Redis 
+            err = rdb.Set(context.Background(), c.Request.URL.RequestURI(), responseBody, 5*time.Minute).Err()
+            if err != nil {
+                fmt.Println("Error caching data in Redis:", err)
+            }
         default:
             // If task limit is reached return a "Service Unavailable" response
             c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Too many concurrent requests"})
