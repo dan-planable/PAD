@@ -1,6 +1,6 @@
 # PAD
 
-**Idea:** A simple banking app which will consist of two microservices for User and Account Management.
+**Idea:** A simple banking app which will consist of two microservices for Templates and Account Management.
 
 ### **Application Suitability:**
 
@@ -50,7 +50,7 @@ Microservices: Microservices are designed for fault isolation, meaning that a fa
 
 ---
 
-- User Service - Responsible for user registration, login, and authentication.
+- Templates Service - Responsible for managing all payment templates, creating, retrieving, updating and deleting them.
 
 - Account Management Service - Handles user account creation, balance inquiries, transactions, and related operations.
 
@@ -82,73 +82,93 @@ Microservices: Microservices are designed for fault isolation, meaning that a fa
 
 ---
 
-**User Service Endpoints:**
-Responsible for user registration, login, and authentication.
-Exposes endpoints such as **/register**, **/login**, and **/profile/{user_id}**.
+**Templates Service Endpoints:**
+Responsible for templates management, contains endpoints such as **/templates**, **/templates/template_id**.
 
-**POST /register**
+**POST /templates**
 
 ```json
 {
-  "username": "dan",
-  "email": "dan@gmail.com",
-  "password": "myPassword"
+  "name": "Water",
+  "content": "Payment for electricity",
+  "account_id": "e70ae4cb-3dd1-4f8d-9a14-3ce8e2b61917"
 }
 ```
 
 ```json
 {
-  "userId": "1",
-  "username": "dan",
-  "email": "dan@gmail.com"
+  "account_id": "e70ae4cb-3dd1-4f8d-9a14-3ce8e2b61917",
+  "name": "Water",
+  "template_id": "2d5ac173-ef43-4d2f-a52a-edc79c26e698"
 }
 ```
 
-**POST /login**
+**GET /templates?account_id**
 
 ```json
 {
-  "username": "dan",
-  "password": "myPassword"
+  "templates": [
+    {
+      "name": "Water",
+      "template_id": "0bb57d9f-b284-4878-bfda-cafaf8e5c3dc"
+    },
+    {
+      "name": "Electricity",
+      "template_id": "42a9b9cf-25dd-4db0-a71a-ff26b7c625dd"
+    }
+  ]
+}
+```
+
+**GET /templates/{template_id}**
+
+```json
+{
+  "account_id": "e70ae4cb-3dd1-4f8d-9a14-3ce8e2b61917",
+  "content": "Payment for electricity",
+  "name": "Water",
+  "template_id": "0bb57d9f-b284-4878-bfda-cafaf8e5c3dc"
+}
+```
+
+**PUT /templates/{template_id}**
+
+```json
+{
+  "name": "New Electricity Bill",
+  "content": "New Payment for electricity"
 }
 ```
 
 ```json
 {
-  "userId": "1",
-  "acccessToken": "123..."
+  "message": "Template with ID 2d5ac173-ef43-4d2f-a52a-edc79c26e698 updated successfully"
 }
 ```
 
-**GET /profile/{user_id}**
+**DELETE /templates/{template_id}**
 
 ```json
 {
-  "userId": "1",
-  "username": "dan",
-  "email": "dan@gmail.com"
+  "message": "Template with ID 2d5ac173-ef43-4d2f-a52a-edc79c26e698 deleted successfully"
 }
 ```
 
-Account Management Endpoints: Handles user account creation, balance inquiries, transactions, and related operations. Provides endpoints like **/accounts**, **/accounts/{account_id}**, **/accounts/{account_id}/balance**, **/accounts/{account_id}/transactions**, **/accounts/{account_id}/deposit**
+Account Management Endpoints: Handles user account creation, balance inquiries, transactions, and related operations. Provides endpoints like **/accounts**, **/accounts/{account_id}/balance**, **/accounts/{account_id}/deposit**, **/accounts/{account_id}/withdraw**, **/accounts/{account_id}/transactions**,
 
 **POST /accounts**
 
 ```json
 {
-  "user_id": "1",
-  "account_type": "savings",
-  "initial_balance": 1000.0
+  "username": "dan11nnn11nnss",
+  "password": "pa1ssword"
 }
 ```
 
 ```json
 {
-  "account_id": "1",
-  "user_id": "1",
-  "account_type": "savings",
-  "balance": 1000.0,
-  "created_at": "2023-09-30T12:00:00Z"
+  "account_id": "9481da99-dd0f-43ff-bc89-9d352a76aa08",
+  "message": "Account created successfully"
 }
 ```
 
@@ -156,10 +176,7 @@ Account Management Endpoints: Handles user account creation, balance inquiries, 
 
 ```json
 {
-  "account_id": "1",
-  "user_id": "1",
-  "account_type": "savings",
-  "balance": 1000.0
+  "balance": 100.0
 }
 ```
 
@@ -167,27 +184,11 @@ Account Management Endpoints: Handles user account creation, balance inquiries, 
 
 ```json
 {
-  "account_id": "1",
-  "user_id": "1",
   "transactions": [
-    {
-      "transaction_id": "1",
-      "type": "deposit",
-      "amount": 500.0,
-      "timestamp": "2023-09-30T14:30:00Z"
-    },
-    {
-      "transaction_id": "2",
-      "type": "withdrawal",
-      "amount": 200.0,
-      "timestamp": "2023-09-30T15:15:00Z"
-    },
-    {
-      "transaction_id": "3",
-      "type": "deposit",
-      "amount": 100.0,
-      "timestamp": "2023-09-30T14:40:00Z"
-    }
+    "Deposited $69",
+    "Deposited $69",
+    "Withdrew $10",
+    "Withdrew $10"
   ]
 }
 ```
@@ -196,7 +197,13 @@ Account Management Endpoints: Handles user account creation, balance inquiries, 
 
 ```json
 {
-  "amount": 100.0
+  "amount": 69
+}
+```
+
+```json
+{
+  "message": "Deposited $69 successfully"
 }
 ```
 
@@ -204,7 +211,13 @@ Account Management Endpoints: Handles user account creation, balance inquiries, 
 
 ```json
 {
-  "amount": 100.0
+  "amount": 10.0
+}
+```
+
+```json
+{
+  "message": "Withdrew $10 successfully"
 }
 ```
 
