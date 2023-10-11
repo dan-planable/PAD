@@ -60,6 +60,9 @@ func (s *ServiceRegistry) GetAvailableServices() []Service {
 func main() {
     r := gin.Default()
     registry := NewServiceRegistry()
+    concurrentLimit := 10 
+    taskLimit := make(chan struct{}, concurrentLimit)
+
 
     // Register replicas for "account_service" and "template_service" in the service directory
     registry.RegisterService("account_service", "localhost", 5000)
@@ -113,64 +116,76 @@ func main() {
     var nextServiceIndex int
 
     return func(c *gin.Context) {
-        // Retrieve all available services from Service Directory based on the received serviceName
-        availableServices := registry.GetServices(serviceName)
+        // Try to acquire a slot from the task limit
+        select {
+        case taskLimit <- struct{}{}:
+            defer func() {
+                // Release slot when the task is done
+                <-taskLimit
+            }()
+            
+            // Retrieve all available services from Service Directory based on the received serviceName
+            availableServices := registry.GetServices(serviceName)
 
-        if len(availableServices) == 0 {
-            c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service Unavailable"})
-            return
-        }
-
-        // Use the captured nextServiceIndex
-        service := availableServices[nextServiceIndex]
-
-        // Update the nextServiceIndex for the next request
-        nextServiceIndex = (nextServiceIndex + 1) % len(availableServices)
-
-        serviceURL := fmt.Sprintf("http://%s:%d%s", service.Host, service.Port, c.Request.URL.RequestURI())
-
-        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-        defer cancel()
-
-        // Prepare the proxy request
-        method := c.Request.Method
-        body := c.Request.Body
-
-        req, err := http.NewRequestWithContext(ctx, method, serviceURL, body)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
-            return
-        }
-
-        // Copy headers from the original request to the proxy request
-        for key, values := range c.Request.Header {
-            for _, value := range values {
-                req.Header.Add(key, value)
+            if len(availableServices) == 0 {
+                c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service Unavailable"})
+                return
             }
+
+            // Use the captured nextServiceIndex
+            service := availableServices[nextServiceIndex]
+
+            // Update the nextServiceIndex for the next request
+            nextServiceIndex = (nextServiceIndex + 1) % len(availableServices)
+
+            serviceURL := fmt.Sprintf("http://%s:%d%s", service.Host, service.Port, c.Request.URL.RequestURI())
+
+            ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+            defer cancel()
+
+            // Prepare the proxy request
+            method := c.Request.Method
+            body := c.Request.Body
+
+            req, err := http.NewRequestWithContext(ctx, method, serviceURL, body)
+            if err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
+                return
+            }
+
+            // Copy headers from the original request to the proxy request
+            for key, values := range c.Request.Header {
+                for _, value := range values {
+                    req.Header.Add(key, value)
+                }
+            }
+
+            // Send the proxy request to the selected service
+            client := &http.Client{}
+            client.Timeout = 5 * time.Second
+            resp, err := client.Do(req)
+            if err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Service"})
+                return
+            }
+            defer resp.Body.Close()
+
+            // Read the response body
+            responseBody, err := io.ReadAll(resp.Body)
+            if err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Service"})
+                return
+            }
+
+            // Set the Content-Type header based on the original response
+            c.Header("Content-Type", resp.Header.Get("Content-Type"))
+
+            // Send the response from the service to the gateway response
+            c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+        default:
+            // If task limit is reached return a "Service Unavailable" response
+            c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Too many concurrent requests"})
         }
-
-        // Send the proxy request to the selected service
-        client := &http.Client{}
-        client.Timeout = 5 * time.Second
-        resp, err := client.Do(req)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Service"})
-            return
-        }
-        defer resp.Body.Close()
-
-        // Read the response body
-        responseBody, err := io.ReadAll(resp.Body)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Service"})
-            return
-        }
-
-        // Set the Content-Type header based on the original response
-        c.Header("Content-Type", resp.Header.Get("Content-Type"))
-
-        // Send the response from the service to the gateway response
-        c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
     }
 }
 
