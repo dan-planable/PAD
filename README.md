@@ -1,5 +1,18 @@
 # PAD
 
+## How to test application
+
+I don't exactly know what should be done after downloading images from Docker Hub but if you start them one by one then this should be the order:
+
+1.  Accounts Management
+2.  Templates Management
+3.  Service Directory
+4.  Gateway
+
+(not sure that redis image was really required to upload on Hub so everything should run without it)
+
+I also uploaded to GitHub the Postman Collection with all requests for the app, it can be downloaded and used. Otherwise, below are all the endpoints with request bodies. (no auth or special behaviour)
+
 **Idea:** A simple banking app which will consist of two microservices for Templates and Account Management.
 
 ### **Application Suitability:**
