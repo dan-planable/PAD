@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/sony/gobreaker"
 )
 
 var rdb *redis.Client
@@ -135,19 +136,43 @@ func main() {
 		c.Next()
 	}
 
+	// Create circuit breakers for account_service and template_service
+	accountServiceBreaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "account_service",
+		MaxRequests: 1,
+		Interval:    4 * 3.5 * time.Second, // reset count each 4 * 3.5 seconds
+		Timeout:     5 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
+
+	templateServiceBreaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "template_service",
+		MaxRequests: 1,
+		Interval:    4 * 3.5 * time.Second, // reset count each 4 * 3.5 seconds
+		Timeout:     5 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
+
 	// Function to proxy requests to a specific service
-	proxyToService := func(serviceName string, registry *ServiceRegistry) gin.HandlerFunc {
+	proxyToService := func(serviceName string, registry *ServiceRegistry, breaker *gobreaker.CircuitBreaker) gin.HandlerFunc {
 		// Initialize a request-specific variable to store the nextServiceIndex
 		var nextServiceIndex int
 
 		return func(c *gin.Context) {
-			// Check if the response is cached in Redis
-			if c.Request.Method == "GET" && c.Request.URL.Path == "/templates/:template_id" ||
-				c.Request.Method == "PUT" && c.Request.URL.Path == "/templates/:template_id" ||
-				c.Request.Method == "DELETE" && c.Request.URL.Path == "/templates/:template_id" {
-				// Create a cache key that includes both the endpoint path and the HTTP method
-				cacheKey := fmt.Sprintf("%s:%s", c.Request.Method, c.Request.URL.RequestURI())
-				// Check if the response is cached in Redis
+			endpoint := c.FullPath()
+			method := c.Request.Method
+			identifier := ""
+			if c.Param("template_id") != "" {
+				identifier = c.Param("template_id")
+			}
+			// Only generate a cache key for specific endpoints
+			if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
+				// Combine the method, endpoint, and identifier to create a unique cache key
+				cacheKey := fmt.Sprintf("cache:%s:%s:%s", method, endpoint, identifier)
 				cachedResponse, err := rdb.Get(context.Background(), cacheKey).Result()
 				if err == nil {
 					c.Data(http.StatusOK, "application/json", []byte(cachedResponse))
@@ -220,11 +245,14 @@ func main() {
 
 				// Send the response from the service to the gateway response
 				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
-				// Store the response in Redis for specified endpoints
-				if c.Request.Method == "GET" && c.Request.URL.Path == "/templates/:template_id" ||
-					c.Request.Method == "PUT" && c.Request.URL.Path == "/templates/:template_id" ||
-					c.Request.Method == "DELETE" && c.Request.URL.Path == "/templates/:template_id" {
-					cacheKey := fmt.Sprintf("%s:%s", c.Request.Method, c.Request.URL.RequestURI())
+				identifier := ""
+				if c.Param("template_id") != "" {
+					identifier = c.Param("template_id")
+				}
+				// Only generate a cache key for specific endpoints
+				if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
+					// Combine the method, endpoint, and identifier to create a unique cache key
+					cacheKey := fmt.Sprintf("cache:%s:%s:%s", method, endpoint, identifier)
 					err = rdb.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
 					if err != nil {
 						fmt.Println("Error caching data in Redis:", err)
@@ -238,18 +266,18 @@ func main() {
 	}
 
 	// Routes and endpoint mappings for "account_service"
-	r.POST("/accounts", authenticate, authorizeAccount, proxyToService("account_service", registry))                         // Create an account
-	r.GET("/accounts/:account_id/balance", authenticate, authorizeAccount, proxyToService("account_service", registry))      // Get an account balance
-	r.POST("/accounts/:account_id/deposit", authenticate, authorizeAccount, proxyToService("account_service", registry))     // Deposit funds into an account
-	r.POST("/accounts/:account_id/withdraw", authenticate, authorizeAccount, proxyToService("account_service", registry))    // Withdraw funds from an account
-	r.GET("/accounts/:account_id/transactions", authenticate, authorizeAccount, proxyToService("account_service", registry)) // Get transactions for an account
+	r.POST("/accounts", authenticate, authorizeAccount, proxyToService("account_service", registry, accountServiceBreaker))                         // Create an account
+	r.GET("/accounts/:account_id/balance", authenticate, authorizeAccount, proxyToService("account_service", registry, accountServiceBreaker))      // Get an account balance
+	r.POST("/accounts/:account_id/deposit", authenticate, authorizeAccount, proxyToService("account_service", registry, accountServiceBreaker))     // Deposit funds into an account
+	r.POST("/accounts/:account_id/withdraw", authenticate, authorizeAccount, proxyToService("account_service", registry, accountServiceBreaker))    // Withdraw funds from an account
+	r.GET("/accounts/:account_id/transactions", authenticate, authorizeAccount, proxyToService("account_service", registry, accountServiceBreaker)) // Get transactions for an account
 
 	// Routes and endpoint mappings for "template_service"
-	r.GET("/templates", authenticate, authorizeTemplate, proxyToService("template_service", registry))                 // Get all templates of an account
-	r.POST("/templates", authenticate, authorizeTemplate, proxyToService("template_service", registry))                // Create a template for an account
-	r.GET("/templates/:template_id", authenticate, authorizeTemplate, proxyToService("template_service", registry))    // Get a particular template
-	r.PUT("/templates/:template_id", authenticate, authorizeTemplate, proxyToService("template_service", registry))    // Update a particular template
-	r.DELETE("/templates/:template_id", authenticate, authorizeTemplate, proxyToService("template_service", registry)) // Delete a particular template
+	r.GET("/templates", authenticate, authorizeTemplate, proxyToService("template_service", registry, templateServiceBreaker))                 // Get all templates of an account
+	r.POST("/templates", authenticate, authorizeTemplate, proxyToService("template_service", registry, templateServiceBreaker))                // Create a template for an account
+	r.GET("/templates/:template_id", authenticate, authorizeTemplate, proxyToService("template_service", registry, templateServiceBreaker))    // Get a particular template
+	r.PUT("/templates/:template_id", authenticate, authorizeTemplate, proxyToService("template_service", registry, templateServiceBreaker))    // Update a particular template
+	r.DELETE("/templates/:template_id", authenticate, authorizeTemplate, proxyToService("template_service", registry, templateServiceBreaker)) // Delete a particular template
 
 	port := 8080
 	fmt.Printf("Gateway listening on port %d...\n", port)
