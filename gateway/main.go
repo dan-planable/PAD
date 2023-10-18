@@ -142,10 +142,17 @@ func main() {
 
 		return func(c *gin.Context) {
 			// Check if the response is cached in Redis
-			cachedResponse, err := rdb.Get(context.Background(), c.Request.URL.RequestURI()).Result()
-			if err == nil {
-				c.Data(http.StatusOK, "application/json", []byte(cachedResponse))
-				return
+			if c.Request.Method == "GET" && c.Request.URL.Path == "/templates/:template_id" ||
+				c.Request.Method == "PUT" && c.Request.URL.Path == "/templates/:template_id" ||
+				c.Request.Method == "DELETE" && c.Request.URL.Path == "/templates/:template_id" {
+				// Create a cache key that includes both the endpoint path and the HTTP method
+				cacheKey := fmt.Sprintf("%s:%s", c.Request.Method, c.Request.URL.RequestURI())
+				// Check if the response is cached in Redis
+				cachedResponse, err := rdb.Get(context.Background(), cacheKey).Result()
+				if err == nil {
+					c.Data(http.StatusOK, "application/json", []byte(cachedResponse))
+					return
+				}
 			}
 			// Try to acquire a slot from the task limit
 			select {
@@ -213,10 +220,15 @@ func main() {
 
 				// Send the response from the service to the gateway response
 				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
-				// Store the response in Redis
-				err = rdb.Set(context.Background(), c.Request.URL.RequestURI(), responseBody, 5*time.Minute).Err()
-				if err != nil {
-					fmt.Println("Error caching data in Redis:", err)
+				// Store the response in Redis for specified endpoints
+				if c.Request.Method == "GET" && c.Request.URL.Path == "/templates/:template_id" ||
+					c.Request.Method == "PUT" && c.Request.URL.Path == "/templates/:template_id" ||
+					c.Request.Method == "DELETE" && c.Request.URL.Path == "/templates/:template_id" {
+					cacheKey := fmt.Sprintf("%s:%s", c.Request.Method, c.Request.URL.RequestURI())
+					err = rdb.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
+					if err != nil {
+						fmt.Println("Error caching data in Redis:", err)
+					}
 				}
 			default:
 				// If task limit is reached return a "Service Unavailable" response
