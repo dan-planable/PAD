@@ -110,14 +110,4 @@ def delete_template(template_id):
     return jsonify({'error': 'Template not found'}), 404
 
 if __name__ == '__main__':
-    # Number of replicas per service
-    num_replicas = 3
-
-    # Start each replica on a separate port
-    for port in range(5005, 5005 + num_replicas):
-        process = multiprocessing.Process(target=start_app, args=(port,))
-        process.start()
-
-    # Wait for processes to finish
-    for process in multiprocessing.active_children():
-        process.join()
+    app.run(host='0.0.0.0', port=5005)  # Replace '5000' with the desired port

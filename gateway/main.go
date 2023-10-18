@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func main() {
 	})
 
 	// Status endpoint for Service Discovery
-	serviceDiscoveryURL := "http://localhost:8082/services"
+	serviceDiscoveryURL := "http://service_discovery:8082/services"
 	r.GET("/service_discovery/status", func(c *gin.Context) {
 		resp, err := http.Get(serviceDiscoveryURL)
 		if err != nil {
@@ -202,7 +203,8 @@ func main() {
 				nextServiceIndex = (nextServiceIndex + 1) % len(availableServices)
 
 				serviceURL := fmt.Sprintf("http://%s:%d%s", service.Host, service.Port, c.Request.URL.RequestURI())
-
+				// Log which service is being selected for this request
+				log.Printf("Selected service: %s, URL: %s", serviceName, serviceURL)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 

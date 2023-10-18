@@ -1,0 +1,62 @@
+version: "3"
+services:
+  # Redis service
+  redis:
+    image: redis:latest
+    container_name: my-redis
+    ports:
+      - "6379:6379"
+
+  # Service Discovery service
+  service_discovery:
+    build:
+      context: ./service_discovery
+    container_name: my-service-discovery
+    ports:
+      - "8082:8082"
+    depends_on:
+      - redis
+    networks:
+      - my-network
+
+  accounts_service:
+    build:
+      context: ./accounts_management
+    container_name: my-accounts-service
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
+    networks:
+      - my-network
+
+  template_service:
+    build:
+      context: ./templates_management
+    container_name: my-template-service
+    ports:
+      - "5005:5005"
+    depends_on:
+      - redis
+    networks:
+      - my-network
+
+  # Gateway service
+  gateway:
+    build:
+      context: ./gateway
+    container_name: my-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - service_discovery
+      - accounts_service
+      - template_service
+      - redis
+    links:
+      - redis
+    networks:
+      - my-network
+
+networks:
+  my-network:

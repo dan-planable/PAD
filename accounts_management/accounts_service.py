@@ -129,16 +129,7 @@ def withdraw(account_id):
     return jsonify({'error': 'Account not found or invalid amount'}), 404
 
 if __name__ == '__main__':
-    # Number of replicas per service
-    num_replicas = 3
+    app.run(host='0.0.0.0', port=5000)  # Replace '5000' with the desired port
 
-    # Start each replica on a separate port
-    for port in range(5000, 5000 + num_replicas):
-        process = multiprocessing.Process(target=start_app, args=(port,))
-        process.start()
-
-    # Wait for processes to finish
-    for process in multiprocessing.active_children():
-        process.join()
 
     

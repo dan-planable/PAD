@@ -1,0 +1,21 @@
+# Use the official Golang image as the base image
+FROM golang:1.20
+
+# Set the working directory in the container
+WORKDIR /app
+
+COPY go.mod go.sum ./
+COPY service_discovery.go .
+
+# Download Go dependencies
+RUN go mod download
+
+# Build the Go application
+RUN go build -o service_discovery
+
+# Expose the port the application will run on
+EXPOSE 8082
+
+# Command to run the executable
+CMD ["./service_discovery"]
+

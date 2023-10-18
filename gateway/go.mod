@@ -1,6 +1,6 @@
 module gateway
 
-go 1.21.2
+go 1.20
 
 require (
 	github.com/bytedance/sonic v1.10.2 // indirect

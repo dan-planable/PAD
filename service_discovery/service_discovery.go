@@ -50,12 +50,8 @@ func main() {
 	registry := NewServiceRegistry()
 
 	// Register replicas for "account_service" and "template_service" in the service directory
-	registry.RegisterService("account_service", "localhost", 5000)
-	registry.RegisterService("account_service", "localhost", 5001)
-	registry.RegisterService("account_service", "localhost", 5002)
-	registry.RegisterService("template_service", "localhost", 5005)
-	registry.RegisterService("template_service", "localhost", 5006)
-	registry.RegisterService("template_service", "localhost", 5007)
+	registry.RegisterService("account_service", "accounts_service", 5000)
+	registry.RegisterService("template_service", "template_service", 5005)
 
 	// Status endpoint
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
