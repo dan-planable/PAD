@@ -2,6 +2,9 @@
 
 ## How to test application
 
+1. Clone Repository locally
+2. Use docker compose build and up to start project / either start each service and gateway separately locally.
+
 I don't exactly know what should be done after downloading images from Docker Hub but if you start them one by one then this should be the order:
 
 1.  Accounts Management
@@ -12,6 +15,18 @@ I don't exactly know what should be done after downloading images from Docker Hu
 (not sure that redis image was really required to upload on Hub so everything should run without it)
 
 I also uploaded to GitHub the Postman Collection with all requests for the app, it can be downloaded and used. Otherwise, below are all the endpoints with request bodies. (no auth or special behaviour)
+
+## Features that we'll be additionally implemented:
+
+Trip Circuit Breaker if multiple reroutes happen.
+Service High Availability.
+Implement Prometheus + Grafana for logging.
+Implement microservice-based 2 Phase Commits.
+Consistent Hashing for Cache.
+
+## API Documentation
+
+The endpoints can be accessed in any order. Just use the first endpoint **POST /accounts** in order to have an account_id which you'll need in all other endpoints.
 
 **Idea:** A simple banking app which will consist of two microservices for Templates and Account Management.
 
