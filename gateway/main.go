@@ -8,11 +8,14 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sony/gobreaker"
 )
 
@@ -76,11 +79,29 @@ func fetchAllServices(serviceDiscoveryURL string) ([]Service, error) {
 	return services, nil
 }
 
+var (
+	requestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gateway_requests_total",
+			Help: "Total number of requests handled by the gateway.",
+		},
+		[]string{"status", "method"},
+	)
+
+	errorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gateway_errors_total",
+			Help: "Total number of errors encountered by the gateway.",
+		},
+		[]string{"method"},
+	)
+)
+
 func main() {
 	r := gin.Default()
 	concurrentLimit := 10
 	taskLimit := make(chan struct{}, concurrentLimit)
-
+	prometheus.MustRegister(requestsTotal, errorsTotal)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
 		Password: "",
@@ -92,8 +113,11 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "OK"})
 	})
 
+	// Add a new endpoint for Prometheus metrics
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	// Status endpoint for Service Discovery
-	serviceDiscoveryURL := "http://service_discovery:8082/services"
+	serviceDiscoveryURL := "http://localhost:8082/services"
 	r.GET("/service_discovery/status", func(c *gin.Context) {
 		resp, err := http.Get(serviceDiscoveryURL)
 		if err != nil {
@@ -158,18 +182,23 @@ func main() {
 		},
 	})
 
-	// Function to proxy requests to a specific service
+	// Function to proxy requests to a specific service with high availability and Prometheus metrics
 	proxyToService := func(serviceName string, registry *ServiceRegistry, breaker *gobreaker.CircuitBreaker) gin.HandlerFunc {
-		// Initialize a request-specific variable to store the nextServiceIndex
+		// Initialize a request-specific variable to store the nextServiceIndex and retry count
 		var nextServiceIndex int
+		var maxRetries = 3
 
 		return func(c *gin.Context) {
+			// Increment total requests counter
+			requestsTotal.WithLabelValues(strconv.Itoa(http.StatusOK), c.Request.Method).Inc()
+
 			endpoint := c.FullPath()
 			method := c.Request.Method
 			identifier := ""
 			if c.Param("template_id") != "" {
 				identifier = c.Param("template_id")
 			}
+
 			// Only generate a cache key for specific endpoints
 			if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
 				// Combine the method, endpoint, and identifier to create a unique cache key
@@ -180,90 +209,101 @@ func main() {
 					return
 				}
 			}
-			// Try to acquire a slot from the task limit
-			select {
-			case taskLimit <- struct{}{}:
-				defer func() {
-					// Release slot when the task is done
-					<-taskLimit
-				}()
 
-				// Retrieve all available services from Service Directory based on the received serviceName
-				availableServices := registry.GetServices(serviceName)
+			// Retry loop
+			var lastError error
+			for retry := 0; retry < maxRetries; retry++ {
+				// Try to acquire a slot from the task limit
+				select {
+				case taskLimit <- struct{}{}:
+					defer func() {
+						// Release slot when the task is done
+						<-taskLimit
+					}()
 
-				if len(availableServices) == 0 {
-					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service Unavailable"})
-					return
-				}
+					// Retrieve all available services from Service Directory based on the received serviceName
+					availableServices := registry.GetServices(serviceName)
 
-				// Use the captured nextServiceIndex
-				service := availableServices[nextServiceIndex]
-
-				// Update the nextServiceIndex for the next request
-				nextServiceIndex = (nextServiceIndex + 1) % len(availableServices)
-
-				serviceURL := fmt.Sprintf("http://%s:%d%s", service.Host, service.Port, c.Request.URL.RequestURI())
-				// Log which service is being selected for this request
-				log.Printf("Selected service: %s, URL: %s", serviceName, serviceURL)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-
-				// Prepare the proxy request
-				method := c.Request.Method
-				body := c.Request.Body
-
-				req, err := http.NewRequestWithContext(ctx, method, serviceURL, body)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
-					return
-				}
-
-				// Copy headers from the original request to the proxy request
-				for key, values := range c.Request.Header {
-					for _, value := range values {
-						req.Header.Add(key, value)
+					if len(availableServices) == 0 {
+						c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service Unavailable"})
+						return
 					}
-				}
 
-				// Send the proxy request to the selected service
-				client := &http.Client{}
-				client.Timeout = 5 * time.Second
-				resp, err := client.Do(req)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Service"})
-					return
-				}
-				defer resp.Body.Close()
+					// Use the captured nextServiceIndex
+					service := availableServices[nextServiceIndex]
 
-				// Read the response body
-				responseBody, err := io.ReadAll(resp.Body)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Service"})
-					return
-				}
+					// Update the nextServiceIndex for the next request
+					nextServiceIndex = (nextServiceIndex + 1) % len(availableServices)
 
-				// Set the Content-Type header based on the original response
-				c.Header("Content-Type", resp.Header.Get("Content-Type"))
+					serviceURL := fmt.Sprintf("http://%s:%d%s", service.Host, service.Port, c.Request.URL.RequestURI())
+					// Log which service is being selected for this request
+					log.Printf("Selected service: %s, URL: %s", serviceName, serviceURL)
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
 
-				// Send the response from the service to the gateway response
-				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
-				identifier := ""
-				if c.Param("template_id") != "" {
-					identifier = c.Param("template_id")
-				}
-				// Only generate a cache key for specific endpoints
-				if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
-					// Combine the method, endpoint, and identifier to create a unique cache key
-					cacheKey := fmt.Sprintf("cache:%s:%s:%s", method, endpoint, identifier)
-					err = rdb.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
+					// Prepare the proxy request
+					req, err := http.NewRequestWithContext(ctx, method, serviceURL, c.Request.Body)
 					if err != nil {
-						fmt.Println("Error caching data in Redis:", err)
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
+						return
 					}
+
+					// Copy headers from the original request to the proxy request
+					for key, values := range c.Request.Header {
+						for _, value := range values {
+							req.Header.Add(key, value)
+						}
+					}
+
+					// Send the proxy request to the selected service
+					client := &http.Client{}
+					client.Timeout = 5 * time.Second
+					resp, err := client.Do(req)
+					if err != nil {
+						// Increment total errors counter
+						errorsTotal.WithLabelValues(c.Request.Method).Inc()
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request to Service"})
+
+						lastError = err
+						continue // Retry with the next replica
+					}
+					defer resp.Body.Close()
+
+					// Read the response body
+					responseBody, err := io.ReadAll(resp.Body)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Service"})
+						return
+					}
+
+					// Set the Content-Type header based on the original response
+					c.Header("Content-Type", resp.Header.Get("Content-Type"))
+
+					// Send the response from the service to the gateway response
+					c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+					identifier := ""
+					if c.Param("template_id") != "" {
+						identifier = c.Param("template_id")
+					}
+					// Only generate a cache key for specific endpoints
+					if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
+						// Combine the method, endpoint, and identifier to create a unique cache key
+						cacheKey := fmt.Sprintf("cache:%s:%s:%s", method, endpoint, identifier)
+						err = rdb.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
+						if err != nil {
+							fmt.Println("Error caching data in Redis:", err)
+						}
+					}
+					// Request succeeded, exit the retry loop
+					return
+				default:
+					// If task limit is reached, return a "Service Unavailable" response
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Too many concurrent requests"})
+					return
 				}
-			default:
-				// If task limit is reached return a "Service Unavailable" response
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Too many concurrent requests"})
 			}
+			// If all retries failed, return an error response
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed after %d retries. Last error: %v", maxRetries, lastError)})
 		}
 	}
 
