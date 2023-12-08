@@ -117,6 +117,26 @@ services:
     networks:
       - my-network
 
+  grafana:
+    image: grafana/grafana
+    container_name: my-grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - my-network
+
+  prometheus:
+    image: prom/prometheus
+    container_name: my-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - /Users/danielpogorevici/Desktop/UNI/PAD/gateway/prometheus.yml
+    depends_on:
+      - gateway
+    networks:
+      - my-network
+
   # Gateway service
   gateway:
     build:
