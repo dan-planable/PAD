@@ -51,8 +51,11 @@ func main() {
 
 	// Register replicas for "account_service" and "template_service" in the service directory
 	registry.RegisterService("account_service", "accounts_service", 5000)
+	registry.RegisterService("account_service", "accounts_service1", 5000)
+	registry.RegisterService("account_service", "accounts_service2", 5000)
 	registry.RegisterService("template_service", "template_service", 5005)
-
+	registry.RegisterService("template_service", "template_service1", 5005)
+	registry.RegisterService("template_service", "template_service2", 5005)
 	// Status endpoint
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

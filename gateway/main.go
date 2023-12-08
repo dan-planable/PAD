@@ -17,9 +17,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sony/gobreaker"
+	"github.com/stathat/consistent"
 )
 
 var rdb *redis.Client
+
+// Create a consistent hash ring for cache keys
+var cacheRing = consistent.New()
 
 // Service represents a registered microservice
 type Service struct {
@@ -53,6 +57,23 @@ func (s *ServiceRegistry) GetServices(name string) []Service {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.services[name]
+}
+
+// Function to add Redis cache servers to the consistent hash ring
+func addCacheServersToRing(redisClients map[string]*redis.Client) {
+	for server, client := range redisClients {
+		cacheRing.Add(server)
+		// Ping each Redis server to check its availability
+		if err := client.Ping(context.Background()).Err(); err != nil {
+			log.Printf("Error connecting to Redis server %s: %v", server, err)
+		}
+	}
+}
+
+// Function to get the Redis client for a given cache key
+func getRedisClientForKey(key string, redisClients map[string]*redis.Client) *redis.Client {
+	server, _ := cacheRing.Get(key)
+	return redisClients[server]
 }
 
 func fetchAllServices(serviceDiscoveryURL string) ([]Service, error) {
@@ -102,11 +123,15 @@ func main() {
 	concurrentLimit := 10
 	taskLimit := make(chan struct{}, concurrentLimit)
 	prometheus.MustRegister(requestsTotal, errorsTotal)
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       0,
-	})
+	// Create Redis clients for multiple Redis servers
+	redisClients := map[string]*redis.Client{
+		"redis1": redis.NewClient(&redis.Options{Addr: "redis1:6379", Password: "", DB: 0}),
+		"redis2": redis.NewClient(&redis.Options{Addr: "redis2:6379", Password: "", DB: 0}),
+		"redis3": redis.NewClient(&redis.Options{Addr: "redis3:6379", Password: "", DB: 0}),
+	}
+
+	// Add Redis cache servers to the consistent hash ring
+	addCacheServersToRing(redisClients)
 
 	// Status endpoint for Gateway service
 	r.GET("/gateway/status", func(c *gin.Context) {
@@ -117,7 +142,7 @@ func main() {
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Status endpoint for Service Discovery
-	serviceDiscoveryURL := "http://localhost:8082/services"
+	serviceDiscoveryURL := "http://service_discovery:8082/services"
 	r.GET("/service_discovery/status", func(c *gin.Context) {
 		resp, err := http.Get(serviceDiscoveryURL)
 		if err != nil {
@@ -203,7 +228,12 @@ func main() {
 			if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
 				// Combine the method, endpoint, and identifier to create a unique cache key
 				cacheKey := fmt.Sprintf("cache:%s:%s:%s", method, endpoint, identifier)
-				cachedResponse, err := rdb.Get(context.Background(), cacheKey).Result()
+
+				// Use consistent hashing to determine the Redis server for the key
+				redisClient := getRedisClientForKey(cacheKey, redisClients)
+
+				// Try to get cached response from the selected Redis server
+				cachedResponse, err := redisClient.Get(context.Background(), cacheKey).Result()
 				if err == nil {
 					c.Data(http.StatusOK, "application/json", []byte(cachedResponse))
 					return
@@ -289,7 +319,12 @@ func main() {
 					if (method == "GET" || method == "PUT" || method == "DELETE") && c.Param("template_id") != "" {
 						// Combine the method, endpoint, and identifier to create a unique cache key
 						cacheKey := fmt.Sprintf("cache:%s:%s:%s", method, endpoint, identifier)
-						err = rdb.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
+
+						// Use consistent hashing to determine the Redis server for the key
+						redisClient := getRedisClientForKey(cacheKey, redisClients)
+
+						// Cache the response on the selected Redis server
+						err = redisClient.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
 						if err != nil {
 							fmt.Println("Error caching data in Redis:", err)
 						}
