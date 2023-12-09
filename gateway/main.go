@@ -70,10 +70,45 @@ func addCacheServersToRing(redisClients map[string]*redis.Client) {
 	}
 }
 
-// Function to get the Redis client for a given cache key
 func getRedisClientForKey(key string, redisClients map[string]*redis.Client) *redis.Client {
 	server, _ := cacheRing.Get(key)
-	return redisClients[server]
+
+	if client, ok := redisClients[server]; ok {
+		if err := client.Ping(context.Background()).Err(); err == nil {
+			return client
+		}
+	}
+	for _, altServer := range redisClients {
+		if err := altServer.Ping(context.Background()).Err(); err == nil {
+			return altServer
+		}
+	}
+	return nil
+}
+
+// Function to redirect cache to another available Redis server
+func redirectCacheToAvailableServer(cacheKey string, responseBody []byte, redisClients map[string]*redis.Client) {
+	// Get the list of available Redis servers
+	var availableServers []string
+	for server := range redisClients {
+		availableServers = append(availableServers, server)
+	}
+
+	for _, server := range availableServers {
+		if server == getRedisClientForKey(cacheKey, redisClients).Options().Addr {
+			continue
+		}
+
+		redisClient := redisClients[server]
+
+		err := redisClient.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
+		if err == nil {
+			log.Printf("Cache redirected to Redis server: %s", server)
+			return
+		}
+	}
+
+	log.Printf("Error redirecting cache. All Redis servers are unavailable.")
 }
 
 func fetchAllServices(serviceDiscoveryURL string) ([]Service, error) {
@@ -326,7 +361,7 @@ func main() {
 						// Cache the response on the selected Redis server
 						err = redisClient.Set(context.Background(), cacheKey, responseBody, 5*time.Minute).Err()
 						if err != nil {
-							fmt.Println("Error caching data in Redis:", err)
+							redirectCacheToAvailableServer(cacheKey, responseBody, redisClients)
 						}
 					}
 					// Request succeeded, exit the retry loop
